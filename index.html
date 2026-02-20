@@ -1,1 +1,148 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>NWS 72-hour Snowfall Forecast (NJ)</title>
+
+  <!-- ArcGIS Maps SDK for JavaScript (pinned) -->
+  <link rel="stylesheet" href="https://js.arcgis.com/4.34/esri/themes/light/main.css" />
+  <script src="https://js.arcgis.com/4.34/"></script>
+
+  <style>
+    html, body { height: 100%; width: 100%; margin: 0; }
+    #wrap { height: 100%; width: 100%; display: flex; flex-direction: column; }
+    #header {
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+      padding: 10px 12px;
+      border-bottom: 1px solid #e5e7eb;
+      background: #ffffff;
+      line-height: 1.2;
+    }
+    #title { font-size: 16px; font-weight: 700; margin: 0; }
+    #meta { font-size: 12px; color: #4b5563; margin-top: 4px; }
+    #viewDiv { flex: 1; width: 100%; }
+    .esri-legend { max-width: 240px; }
+  </style>
+</head>
+
+<body>
+  <div id="wrap">
+    <div id="header">
+      <div id="title">Expected Snowfall (Next 72 Hours) — New Jersey</div>
+      <div id="meta">Loading valid period…</div>
+    </div>
+    <div id="viewDiv"></div>
+  </div>
+
+  <script>
+    require([
+      "esri/Map",
+      "esri/views/MapView",
+      "esri/layers/FeatureLayer",
+      "esri/widgets/Legend",
+      "esri/widgets/Expand"
+    ], function(Map, MapView, FeatureLayer, Legend, Expand) {
+
+      // 72-hour cumulative snowfall layer
+      const snowfallLayer = new FeatureLayer({
+        url: "https://services9.arcgis.com/RHVPKKiFTONKtxq3/arcgis/rest/services/NDFD_SnowFall_v1/FeatureServer/2",
+        title: "72-hour Cumulative Snowfall",
+        popupEnabled: true,
+        outFields: ["label", "fromdate", "todate"],
+        popupTemplate: {
+          title: "{label}",
+          content: function(feature) {
+            const attrs = feature.graphic.attributes;
+
+            const fmt = (ms) => {
+              if (!ms) return "—";
+              const d = new Date(ms);
+              return d.toLocaleString(undefined, { year: "numeric", month: "short", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+            };
+
+            return `
+              <div style="font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;">
+                <div><b>Bin:</b> ${attrs.label || "—"}</div>
+                <div><b>Valid:</b> ${fmt(attrs.fromdate)} → ${fmt(attrs.todate)}</div>
+                <div style="margin-top:6px; color:#6b7280; font-size:12px;">
+                  Source: NDFD Snowfall Forecast (72-hour cumulative total)
+                </div>
+              </div>
+            `;
+          }
+        }
+      });
+
+      // Basemap "osm" avoids needing an ArcGIS API key for Esri basemaps
+      const map = new Map({
+        basemap: "osm",
+        layers: [snowfallLayer]
+      });
+
+      // Approximate NJ view
+      const view = new MapView({
+        container: "viewDiv",
+        map,
+        center: [-74.7, 40.1], // lon, lat
+        zoom: 7,
+        constraints: { minZoom: 6, maxZoom: 12 }
+      });
+
+      // Legend
+      const legend = new Legend({ view });
+      const legendExpand = new Expand({
+        view,
+        content: legend,
+        expanded: true
+      });
+      view.ui.add(legendExpand, "top-right");
+
+      // Pull valid period from any feature (they typically share same from/to)
+      async function updateValidPeriod() {
+        const metaEl = document.getElementById("meta");
+        try {
+          const result = await snowfallLayer.queryFeatures({
+            where: "1=1",
+            outFields: ["fromdate", "todate"],
+            returnGeometry: false,
+            num: 1
+          });
+
+          if (!result.features.length) {
+            metaEl.textContent = "Valid period: unavailable";
+            return;
+          }
+
+          const { fromdate, todate } = result.features[0].attributes;
+          const fmt = (ms) => {
+            if (!ms) return "—";
+            const d = new Date(ms);
+            return d.toLocaleString(undefined, { weekday: "short", month: "short", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+          };
+
+          metaEl.textContent = `Valid period: ${fmt(fromdate)} → ${fmt(todate)} (auto-refreshes)`;
+        } catch (e) {
+          metaEl.textContent = "Valid period: error loading";
+          // eslint-disable-next-line no-console
+          console.error(e);
+        }
+      }
+
+      // Refresh the layer periodically (hourly updates upstream; 10 min is plenty)
+      function startAutoRefresh() {
+        setInterval(() => {
+          snowfallLayer.refresh();
+          updateValidPeriod();
+        }, 10 * 60 * 1000);
+      }
+
+      view.when(async () => {
+        await updateValidPeriod();
+        startAutoRefresh();
+      });
+    });
+  </script>
+</body>
+</html>
 
