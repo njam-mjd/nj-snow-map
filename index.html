@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>NWS 72-hour Snowfall Forecast (NJ)</title>
+  <title>Expected Snowfall: Official NWS Forecast (NJ)</title>
 
   <link rel="stylesheet" href="https://js.arcgis.com/4.34/esri/themes/light/main.css" />
   <script src="https://js.arcgis.com/4.34/"></script>
@@ -18,7 +18,7 @@
       background: #ffffff;
       line-height: 1.2;
     }
-    #title { font-size: 16px; font-weight: 700; margin: 0; }
+    #title { font-size: 16px; font-weight: 800; margin: 0; }
     #meta { font-size: 12px; color: #4b5563; margin-top: 4px; }
     #viewDiv { flex: 1; width: 100%; }
     .esri-legend { max-width: 260px; }
@@ -28,7 +28,7 @@
 <body>
   <div id="wrap">
     <div id="header">
-      <div id="title">Expected Snowfall (Next 72 Hours) — New Jersey</div>
+      <div id="title">Expected Snowfall: Official NWS Forecast — New Jersey</div>
       <div id="meta">Loading valid period…</div>
     </div>
     <div id="viewDiv"></div>
@@ -62,8 +62,10 @@
     ) {
 
       // -----------------------------
-      // 1) API KEY (do NOT commit real keys to public repos)
+      // 1) API KEY
       // -----------------------------
+      // Best practice: do NOT commit a real key to a public repo.
+      // Use ?key=YOUR_KEY in the URL, or set DEFAULT_API_KEY for private deployments.
       const DEFAULT_API_KEY = "PASTE_YOUR_ARCGIS_API_KEY_HERE";
       const urlKey = new URLSearchParams(window.location.search).get("key");
       const apiKey = urlKey || DEFAULT_API_KEY;
@@ -75,57 +77,91 @@
       }
 
       // -----------------------------
-      // 2) Layers
+      // 2) Snowfall layer (NDFD 72h cumulative)
       // -----------------------------
-
-      // NDFD 72-hour cumulative snowfall polygons
       const snowfallLayer = new FeatureLayer({
         url: "https://services9.arcgis.com/RHVPKKiFTONKtxq3/arcgis/rest/services/NDFD_SnowFall_v1/FeatureServer/2",
-        title: "72-hour Cumulative Snowfall",
-        opacity: 0.55,            // let geography show through
-        blendMode: "multiply",    // keeps roads/labels readable
-        outFields: ["label", "fromdate", "todate"]
+        title: "Expected Snowfall (72-hour total)",
+        opacity: 0.72,          // a bit more opaque since we removed polygon outlines
+        blendMode: "multiply",  // helps geography show through
+        outFields: ["grid_code", "label", "fromdate", "todate"],
+        popupEnabled: false     // we will control popups on click
       });
 
-      // NJ Municipalities (for town name on click) — invisible
+      // MATCH THE “OFFICIAL NWS FORECAST” STYLE PALETTE (approx from your screenshot):
+      // blue -> yellow -> orange/red -> purple (highest)
+      // The service classes are grid_code = 1,2,3,6,12,18,24,36,999
+      // (labels: 0-1, 1-2, 2-3, 3-6, 6-12, 12-18, 18-24, 24-36, >36)
+      snowfallLayer.renderer = {
+        type: "unique-value",
+        field: "grid_code",
+        defaultSymbol: {
+          type: "simple-fill",
+          color: [0, 0, 0, 0],
+          outline: { type: "simple-line", color: [0, 0, 0, 0], width: 0 }
+        },
+        uniqueValueInfos: [
+          { value: 1,   label: '0 - 1"',   symbol: fill([220, 235, 245, 255]) },
+          { value: 2,   label: '1 - 2"',   symbol: fill([165, 215, 240, 255]) },
+          { value: 3,   label: '2 - 3"',   symbol: fill([110, 185, 225, 255]) },
+          { value: 6,   label: '3 - 6"',   symbol: fill([ 25, 120, 200, 255]) },
+          { value: 12,  label: '6 - 12"',  symbol: fill([255, 230,   0, 255]) },
+          { value: 18,  label: '12 - 18"', symbol: fill([255, 160,   0, 255]) },
+          { value: 24,  label: '18 - 24"', symbol: fill([255,  60,   0, 255]) },
+          { value: 36,  label: '24 - 36"', symbol: fill([190,   0,   0, 255]) },
+          { value: 999, label: '>36"',     symbol: fill([170, 140, 235, 255]) }
+        ]
+      };
+
+      function fill(rgba) {
+        return {
+          type: "simple-fill",
+          color: rgba,
+          outline: { type: "simple-line", color: [0, 0, 0, 0], width: 0 }
+        };
+      }
+
+      // -----------------------------
+      // 3) Municipality lookup (town name on click)
+      // -----------------------------
       const municipalitiesLayer = new FeatureLayer({
         url: "https://services2.arcgis.com/XVOqAjTOJ5P6ngMu/arcgis/rest/services/NJ_Municipalities_3857/FeatureServer/0",
         title: "NJ Municipalities (lookup)",
-        opacity: 0,               // hide it
-        visible: false,           // keep off the map display
+        opacity: 0,
+        visible: false,
         outFields: ["NAME", "MUN_TYPE", "COUNTY"]
       });
 
-      // USA states boundaries (we'll query NJ polygon from here)
+      // -----------------------------
+      // 4) NJ mask (no border/outline)
+      // -----------------------------
       const statesLayer = new FeatureLayer({
         url: "https://services.arcgis.com/P3ePLMYs2RVChkJx/arcgis/rest/services/USA_States_Generalized_Boundaries/FeatureServer/0",
         title: "USA States (lookup)",
         opacity: 0,
         visible: false,
-        outFields: ["STATE_ABBR", "STATE_NAME"]
+        outFields: ["STATE_ABBR"]
       });
 
-      // Graphics for mask + outline
       const maskLayer = new GraphicsLayer({ title: "NJ Mask" });
-      const outlineLayer = new GraphicsLayer({ title: "NJ Outline" });
 
       // -----------------------------
-      // 3) Map + View (zoomed closer to NJ)
+      // 5) Map + view (zoomed closer to NJ)
       // -----------------------------
       const map = new Map({
-        basemap: "streets-navigation-vector", // "bumped" basemap; requires API key
-        layers: [snowfallLayer, maskLayer, outlineLayer]
+        basemap: "streets-navigation-vector",
+        layers: [snowfallLayer, maskLayer]
       });
 
       const view = new MapView({
         container: "viewDiv",
         map,
         center: [-74.55, 40.12],
-        zoom: 8.8,
+        zoom: 8.9,
         constraints: { minZoom: 7, maxZoom: 13 }
       });
 
-      // Legend (collapsed by default)
+      // Legend (collapsed)
       const legend = new Legend({ view });
       const legendExpand = new Expand({
         view,
@@ -162,9 +198,9 @@
           }
 
           const { fromdate, todate } = result.features[0].attributes;
-          metaEl.textContent = `Valid period: ${fmt(fromdate)} → ${fmt(todate)} (auto-refreshes)`;
+          metaEl.textContent = `Valid: ${fmt(fromdate)} → ${fmt(todate)} (auto-refreshes)`;
         } catch (e) {
-          metaEl.textContent = "Valid period: error loading";
+          metaEl.textContent = "Valid: error loading";
           console.error(e);
         }
       }
@@ -176,26 +212,20 @@
         }, 10 * 60 * 1000);
       }
 
-      // -----------------------------
-      // 4) Build NJ boundary mask + outline
-      // -----------------------------
-      async function buildNjMaskAndOutline() {
+      async function buildNjMask() {
         // Query NJ polygon from states layer
         const nj = await statesLayer.queryFeatures({
           where: "STATE_ABBR = 'NJ'",
-          outFields: ["STATE_NAME", "STATE_ABBR"],
+          outFields: ["STATE_ABBR"],
           returnGeometry: true,
           num: 1,
-          // project result to view spatial reference if needed
           outSpatialReference: view.spatialReference
         });
 
         if (!nj.features.length) return;
         const njGeom = nj.features[0].geometry;
 
-        // World polygon in Web Mercator-ish coordinates (view SR)
-        // Use a very large rectangle that covers the whole map world.
-        // This works well as a "mask outside NJ" when differenced with NJ polygon.
+        // Big world rectangle in Web Mercator
         const sr = view.spatialReference || SpatialReference.WebMercator;
         const world = new Polygon({
           spatialReference: sr,
@@ -210,32 +240,17 @@
 
         const outsideNj = geometryEngine.difference(world, njGeom);
 
-        // Mask (dim outside NJ)
         maskLayer.removeAll();
         maskLayer.add(new Graphic({
           geometry: outsideNj,
           symbol: {
             type: "simple-fill",
-            color: [255, 255, 255, 0.55],
-            outline: { type: "simple-line", color: [255, 255, 255, 0], width: 0 }
-          }
-        }));
-
-        // NJ outline
-        outlineLayer.removeAll();
-        outlineLayer.add(new Graphic({
-          geometry: njGeom,
-          symbol: {
-            type: "simple-line",
-            color: [0, 0, 0, 0.85],
-            width: 2
+            color: [255, 255, 255, 0.52], // dim outside NJ
+            outline: { type: "simple-line", color: [0, 0, 0, 0], width: 0 } // NO border line
           }
         }));
       }
 
-      // -----------------------------
-      // 5) Click popup: Town name + snow bin
-      // -----------------------------
       async function getMunicipalityName(mapPoint) {
         try {
           const res = await municipalitiesLayer.queryFeatures({
@@ -247,7 +262,6 @@
           });
           if (!res.features.length) return null;
           const a = res.features[0].attributes;
-          // Example: "Toms River (Ocean County)" or just NAME if you want shorter
           return a.COUNTY ? `${a.NAME} (${a.COUNTY} County)` : a.NAME;
         } catch (e) {
           console.error(e);
@@ -274,22 +288,19 @@
 
       function openPopup(mapPoint, town, snowAttrs) {
         const townLine = town ? `<div><b>Town:</b> ${town}</div>` : `<div><b>Town:</b> —</div>`;
-        const snowLine = snowAttrs?.label ? `<div><b>Snow bin:</b> ${snowAttrs.label}</div>` : `<div><b>Snow bin:</b> —</div>`;
+        const snowLine = snowAttrs?.label ? `<div><b>Expected snowfall:</b> ${snowAttrs.label}</div>` : `<div><b>Expected snowfall:</b> —</div>`;
         const validLine = (snowAttrs?.fromdate && snowAttrs?.todate)
           ? `<div><b>Valid:</b> ${fmt(snowAttrs.fromdate)} → ${fmt(snowAttrs.todate)}</div>`
           : `<div><b>Valid:</b> —</div>`;
 
         view.popup.open({
           location: mapPoint,
-          title: "Forecast at clicked location",
+          title: "Expected Snowfall (Official NWS Forecast)",
           content: `
             <div style="font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;">
               ${townLine}
               ${snowLine}
               ${validLine}
-              <div style="margin-top:6px; color:#6b7280; font-size:12px;">
-                Source: NDFD Snowfall Forecast (72-hour cumulative total)
-              </div>
             </div>
           `
         });
@@ -301,16 +312,12 @@
       view.when(async () => {
         await updateValidPeriod();
         startAutoRefresh();
+        await buildNjMask();
 
-        // build mask/outline after view SR is known
-        await buildNjMaskAndOutline();
-
-        // click behavior
         view.on("click", async (event) => {
-          // prevent default popup behavior
           view.popup.close();
-
           const mapPoint = event.mapPoint;
+
           const [town, snowAttrs] = await Promise.all([
             getMunicipalityName(mapPoint),
             getSnowBinAtPoint(mapPoint)
