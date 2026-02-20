@@ -333,8 +333,9 @@
           }
 
           const { fromdate, todate } = result.features[0].attributes;
-          // show both in header, but popup will show only end time as requested
-          const start = fromdate ? new Date(fromdate).toLocaleString(undefined, { weekday:"short", month:"short", day:"2-digit", hour:"2-digit", minute:"2-digit" }) : "—";
+          const start = fromdate
+            ? new Date(fromdate).toLocaleString(undefined, { weekday:"short", month:"short", day:"2-digit", hour:"2-digit", minute:"2-digit" })
+            : "—";
           metaEl.textContent = `Valid: ${start} → ${fmtEnd(todate)} (auto-refreshes)`;
         } catch (e) {
           metaEl.textContent = "Valid: error loading";
@@ -390,13 +391,30 @@
       }
 
       // -----------------------------
-      // Popup content (new format)
+      // Popup content (new format) + FIX for repeated "Township Township"
       // -----------------------------
       function municipalityTitle(attrs) {
         if (!attrs) return "Selected location";
-        const name = attrs.NAME || "Selected location";
-        const type = attrs.MUN_TYPE ? ` ${attrs.MUN_TYPE}` : "";
-        return `${name}${type}`.trim();
+
+        const nameRaw = (attrs.NAME || "").trim();
+        const typeRaw = (attrs.MUN_TYPE || "").trim();
+
+        if (!nameRaw) return "Selected location";
+        if (!typeRaw) return nameRaw;
+
+        const name = nameRaw.replace(/\s+/g, " ");
+        const type = typeRaw.replace(/\s+/g, " ");
+
+        const nameLC = name.toLowerCase();
+        const typeLC = type.toLowerCase();
+
+        // If NAME already contains the type word (e.g., "Toms River Township"), don't append again.
+        const safeType = typeLC.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        const hasTypeWord = new RegExp("\\b" + safeType + "\\b", "i").test(name);
+        const endsWithType = nameLC.endsWith(" " + typeLC);
+
+        if (hasTypeWord || endsWithType) return name;
+        return `${name} ${type}`;
       }
 
       async function getMunicipalityAtPoint(mapPoint) {
@@ -475,7 +493,6 @@
             {
               name: "ZIP / address",
               placeholder: "Search ZIP (e.g., 08753)",
-              // Uses ArcGIS World Geocoding Service (requires API key)
               url: "https://geocode-api.arcgis.com/arcgis/rest/services/World/GeocodeServer",
               singleLineFieldName: "SingleLine",
               resultGraphicEnabled: false
@@ -486,17 +503,15 @@
         view.ui.add(search, "top-left");
 
         search.on("select-result", async (evt) => {
-          // If it's a municipality feature, zoom to it and open popup at centroid
           const feature = evt?.result?.feature;
+
           if (feature && feature.geometry) {
             await view.goTo({ target: feature.geometry, scale: 140000 });
             const center = feature.geometry.extent ? feature.geometry.extent.center : feature.geometry;
             const munAttrs = feature.attributes || null;
-            // snowfall at that center point
             const snowAttrs = await getSnowAtPoint(center);
             openPopup(center, munAttrs, snowAttrs);
           } else if (evt?.result?.extent) {
-            // Geocoder results: go to extent/location and open popup
             await view.goTo(evt.result.extent.expand(1.2));
             const p = evt.result.feature?.geometry || evt.result.extent.center;
             const munAttrs = await getMunicipalityAtPoint(p);
