@@ -11,27 +11,138 @@
   <style>
     html, body { height: 100%; width: 100%; margin: 0; }
     #wrap { height: 100%; width: 100%; display: flex; flex-direction: column; }
+
     #header {
       font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
       padding: 10px 12px;
       border-bottom: 1px solid #e5e7eb;
       background: #ffffff;
       line-height: 1.2;
+      display: flex;
+      gap: 14px;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
     }
+
+    #headerLeft { display: flex; flex-direction: column; gap: 4px; }
     #title { font-size: 16px; font-weight: 800; margin: 0; }
-    #meta { font-size: 12px; color: #4b5563; margin-top: 4px; }
-    #viewDiv { flex: 1; width: 100%; }
-    .esri-legend { max-width: 260px; }
+    #meta { font-size: 12px; color: #4b5563; }
+
+    /* “Two tweak knobs” control group */
+    #controls {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      font-size: 12px;
+      color: #111827;
+    }
+    .control {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      background: #f9fafb;
+      border: 1px solid #e5e7eb;
+      border-radius: 10px;
+      padding: 6px 10px;
+    }
+    .control label { font-weight: 700; }
+    .control input[type="range"] { width: 140px; }
+    .control select {
+      border: 1px solid #d1d5db;
+      border-radius: 8px;
+      padding: 4px 8px;
+      background: #fff;
+    }
+
+    #viewDiv { flex: 1; width: 100%; position: relative; }
+
+    /* Right-side legend panel (styled like screenshot) */
+    #legendPanel {
+      position: absolute;
+      right: 14px;
+      top: 14px;
+      z-index: 20;
+      width: 140px;
+      background: rgba(10, 10, 14, 0.78);
+      border: 1px solid rgba(255,255,255,0.18);
+      border-radius: 10px;
+      padding: 10px 10px 8px 10px;
+      color: #fff;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.25);
+      backdrop-filter: blur(6px);
+    }
+    #legendTitle {
+      font-size: 12px;
+      font-weight: 800;
+      margin: 0 0 8px 0;
+      letter-spacing: 0.2px;
+    }
+    #legendInner {
+      display: grid;
+      grid-template-columns: 18px 1fr;
+      gap: 6px 10px;
+      align-items: center;
+    }
+    .swatch {
+      width: 18px;
+      height: 14px;
+      border-radius: 3px;
+      border: 1px solid rgba(255,255,255,0.25);
+    }
+    .legLabel {
+      font-size: 12px;
+      line-height: 1.1;
+      white-space: nowrap;
+    }
+    #legendFooter {
+      margin-top: 8px;
+      font-size: 10.5px;
+      color: rgba(255,255,255,0.75);
+      line-height: 1.2;
+    }
+
+    /* Make ArcGIS widgets fit */
+    .esri-search { max-width: 340px; }
   </style>
 </head>
 
 <body>
   <div id="wrap">
     <div id="header">
-      <div id="title">Expected Snowfall: Official NWS Forecast — New Jersey</div>
-      <div id="meta">Loading valid period…</div>
+      <div id="headerLeft">
+        <div id="title">Expected Snowfall: Official NWS Forecast — New Jersey</div>
+        <div id="meta">Loading valid period…</div>
+      </div>
+
+      <div id="controls">
+        <div class="control">
+          <label for="opacityKnob">Opacity</label>
+          <input id="opacityKnob" type="range" min="0.30" max="0.95" step="0.01" value="0.72" />
+          <span id="opacityValue">0.72</span>
+        </div>
+        <div class="control">
+          <label for="blendKnob">Blend</label>
+          <select id="blendKnob">
+            <option value="multiply" selected>multiply</option>
+            <option value="normal">normal</option>
+            <option value="overlay">overlay</option>
+          </select>
+        </div>
+      </div>
     </div>
-    <div id="viewDiv"></div>
+
+    <div id="viewDiv">
+      <!-- Custom legend overlay -->
+      <div id="legendPanel" aria-label="Snowfall legend">
+        <div id="legendTitle">Expected Snowfall (in.)</div>
+        <div id="legendInner"></div>
+        <div id="legendFooter">Official National Weather Service forecast</div>
+      </div>
+    </div>
   </div>
 
   <script>
@@ -42,8 +153,7 @@
       "esri/layers/FeatureLayer",
       "esri/layers/GraphicsLayer",
       "esri/Graphic",
-      "esri/widgets/Legend",
-      "esri/widgets/Expand",
+      "esri/widgets/Search",
       "esri/geometry/Polygon",
       "esri/geometry/SpatialReference",
       "esri/geometry/geometryEngine"
@@ -54,18 +164,15 @@
       FeatureLayer,
       GraphicsLayer,
       Graphic,
-      Legend,
-      Expand,
+      Search,
       Polygon,
       SpatialReference,
       geometryEngine
     ) {
 
       // -----------------------------
-      // 1) API KEY
+      // API KEY (use ?key=YOUR_KEY to avoid committing keys)
       // -----------------------------
-      // Best practice: do NOT commit a real key to a public repo.
-      // Use ?key=YOUR_KEY in the URL, or set DEFAULT_API_KEY for private deployments.
       const DEFAULT_API_KEY = "PASTE_YOUR_ARCGIS_API_KEY_HERE";
       const urlKey = new URLSearchParams(window.location.search).get("key");
       const apiKey = urlKey || DEFAULT_API_KEY;
@@ -73,57 +180,57 @@
       if (apiKey && apiKey !== "PASTE_YOUR_ARCGIS_API_KEY_HERE") {
         esriConfig.apiKey = apiKey;
       } else {
-        console.warn("No ArcGIS API key set. Basemap may fail. Pass ?key=YOUR_KEY or edit DEFAULT_API_KEY.");
+        console.warn("No ArcGIS API key set. Basemap/geocoding may fail. Pass ?key=YOUR_KEY or edit DEFAULT_API_KEY.");
       }
 
       // -----------------------------
-      // 2) Snowfall layer (NDFD 72h cumulative)
+      // Color scheme (matched to screenshot palette feel)
+      // Service bins: 0–1, 1–2, 2–3, 3–6, 6–12, 12–18, 18–24, 24–36, >36
       // -----------------------------
-      const snowfallLayer = new FeatureLayer({
-        url: "https://services9.arcgis.com/RHVPKKiFTONKtxq3/arcgis/rest/services/NDFD_SnowFall_v1/FeatureServer/2",
-        title: "Expected Snowfall (72-hour total)",
-        opacity: 0.72,          // a bit more opaque since we removed polygon outlines
-        blendMode: "multiply",  // helps geography show through
-        outFields: ["grid_code", "label", "fromdate", "todate"],
-        popupEnabled: false     // we will control popups on click
-      });
+      const legendBins = [
+        { grid: 1,   label: '0 - 1"',   color: [220, 235, 245, 255] },
+        { grid: 2,   label: '1 - 2"',   color: [165, 215, 240, 255] },
+        { grid: 3,   label: '2 - 3"',   color: [110, 185, 225, 255] },
+        { grid: 6,   label: '3 - 6"',   color: [ 25, 120, 200, 255] },
+        { grid: 12,  label: '6 - 12"',  color: [255, 230,   0, 255] },
+        { grid: 18,  label: '12 - 18"', color: [255, 160,   0, 255] },
+        { grid: 24,  label: '18 - 24"', color: [255,  60,   0, 255] },
+        { grid: 36,  label: '24 - 36"', color: [190,   0,   0, 255] },
+        { grid: 999, label: '>36"',     color: [170, 140, 235, 255] }
+      ];
 
-      // MATCH THE “OFFICIAL NWS FORECAST” STYLE PALETTE (approx from your screenshot):
-      // blue -> yellow -> orange/red -> purple (highest)
-      // The service classes are grid_code = 1,2,3,6,12,18,24,36,999
-      // (labels: 0-1, 1-2, 2-3, 3-6, 6-12, 12-18, 18-24, 24-36, >36)
-      snowfallLayer.renderer = {
-        type: "unique-value",
-        field: "grid_code",
-        defaultSymbol: {
-          type: "simple-fill",
-          color: [0, 0, 0, 0],
-          outline: { type: "simple-line", color: [0, 0, 0, 0], width: 0 }
-        },
-        uniqueValueInfos: [
-          { value: 1,   label: '0 - 1"',   symbol: fill([220, 235, 245, 255]) },
-          { value: 2,   label: '1 - 2"',   symbol: fill([165, 215, 240, 255]) },
-          { value: 3,   label: '2 - 3"',   symbol: fill([110, 185, 225, 255]) },
-          { value: 6,   label: '3 - 6"',   symbol: fill([ 25, 120, 200, 255]) },
-          { value: 12,  label: '6 - 12"',  symbol: fill([255, 230,   0, 255]) },
-          { value: 18,  label: '12 - 18"', symbol: fill([255, 160,   0, 255]) },
-          { value: 24,  label: '18 - 24"', symbol: fill([255,  60,   0, 255]) },
-          { value: 36,  label: '24 - 36"', symbol: fill([190,   0,   0, 255]) },
-          { value: 999, label: '>36"',     symbol: fill([170, 140, 235, 255]) }
-        ]
-      };
-
-      function fill(rgba) {
+      function fillSymbol(rgba) {
         return {
           type: "simple-fill",
           color: rgba,
-          outline: { type: "simple-line", color: [0, 0, 0, 0], width: 0 }
+          outline: { type: "simple-line", color: [0,0,0,0], width: 0 } // no polygon outlines
         };
       }
 
       // -----------------------------
-      // 3) Municipality lookup (town name on click)
+      // Layers
       // -----------------------------
+      const snowfallLayer = new FeatureLayer({
+        url: "https://services9.arcgis.com/RHVPKKiFTONKtxq3/arcgis/rest/services/NDFD_SnowFall_v1/FeatureServer/2",
+        title: "Expected Snowfall (72-hour total)",
+        opacity: 0.72,          // knob default
+        blendMode: "multiply",  // knob default
+        outFields: ["grid_code", "label", "fromdate", "todate"],
+        popupEnabled: false
+      });
+
+      snowfallLayer.renderer = {
+        type: "unique-value",
+        field: "grid_code",
+        defaultSymbol: fillSymbol([0,0,0,0]),
+        uniqueValueInfos: legendBins.map(b => ({
+          value: b.grid,
+          label: b.label,
+          symbol: fillSymbol(b.color)
+        }))
+      };
+
+      // NJ municipality lookup for popup title + town search
       const municipalitiesLayer = new FeatureLayer({
         url: "https://services2.arcgis.com/XVOqAjTOJ5P6ngMu/arcgis/rest/services/NJ_Municipalities_3857/FeatureServer/0",
         title: "NJ Municipalities (lookup)",
@@ -132,9 +239,7 @@
         outFields: ["NAME", "MUN_TYPE", "COUNTY"]
       });
 
-      // -----------------------------
-      // 4) NJ mask (no border/outline)
-      // -----------------------------
+      // NJ mask (no border line)
       const statesLayer = new FeatureLayer({
         url: "https://services.arcgis.com/P3ePLMYs2RVChkJx/arcgis/rest/services/USA_States_Generalized_Boundaries/FeatureServer/0",
         title: "USA States (lookup)",
@@ -146,7 +251,7 @@
       const maskLayer = new GraphicsLayer({ title: "NJ Mask" });
 
       // -----------------------------
-      // 5) Map + view (zoomed closer to NJ)
+      // Map + view (zoomed out one level)
       // -----------------------------
       const map = new Map({
         basemap: "streets-navigation-vector",
@@ -157,23 +262,53 @@
         container: "viewDiv",
         map,
         center: [-74.55, 40.12],
-        zoom: 8.9,
+        zoom: 7.9, // one level out from prior ~8.9
         constraints: { minZoom: 7, maxZoom: 13 }
       });
 
-      // Legend (collapsed)
-      const legend = new Legend({ view });
-      const legendExpand = new Expand({
-        view,
-        content: legend,
-        expanded: false
-      });
-      view.ui.add(legendExpand, "top-right");
+      // -----------------------------
+      // Legend panel HTML build (right side, screenshot-like)
+      // -----------------------------
+      function buildLegendUI() {
+        const inner = document.getElementById("legendInner");
+        inner.innerHTML = "";
+        // Highest at top like many NWS legends
+        const binsTopDown = [...legendBins].reverse();
+        for (const b of binsTopDown) {
+          const sw = document.createElement("div");
+          sw.className = "swatch";
+          sw.style.background = `rgba(${b.color[0]},${b.color[1]},${b.color[2]},${(b.color[3]/255).toFixed(3)})`;
+
+          const lab = document.createElement("div");
+          lab.className = "legLabel";
+          lab.textContent = b.label;
+
+          inner.appendChild(sw);
+          inner.appendChild(lab);
+        }
+      }
+      buildLegendUI();
 
       // -----------------------------
-      // Helpers
+      // “Two tweak knobs” wiring
       // -----------------------------
-      const fmt = (ms) => {
+      const opacityKnob = document.getElementById("opacityKnob");
+      const opacityValue = document.getElementById("opacityValue");
+      opacityKnob.addEventListener("input", () => {
+        const v = Number(opacityKnob.value);
+        snowfallLayer.opacity = v;
+        opacityValue.textContent = v.toFixed(2);
+      });
+
+      const blendKnob = document.getElementById("blendKnob");
+      blendKnob.addEventListener("change", () => {
+        snowfallLayer.blendMode = blendKnob.value;
+      });
+
+      // -----------------------------
+      // Valid period display (header)
+      // -----------------------------
+      const fmtEnd = (ms) => {
         if (!ms) return "—";
         const d = new Date(ms);
         return d.toLocaleString(undefined, {
@@ -193,12 +328,14 @@
           });
 
           if (!result.features.length) {
-            metaEl.textContent = "Valid period: unavailable";
+            metaEl.textContent = "Valid: unavailable";
             return;
           }
 
           const { fromdate, todate } = result.features[0].attributes;
-          metaEl.textContent = `Valid: ${fmt(fromdate)} → ${fmt(todate)} (auto-refreshes)`;
+          // show both in header, but popup will show only end time as requested
+          const start = fromdate ? new Date(fromdate).toLocaleString(undefined, { weekday:"short", month:"short", day:"2-digit", hour:"2-digit", minute:"2-digit" }) : "—";
+          metaEl.textContent = `Valid: ${start} → ${fmtEnd(todate)} (auto-refreshes)`;
         } catch (e) {
           metaEl.textContent = "Valid: error loading";
           console.error(e);
@@ -212,8 +349,10 @@
         }, 10 * 60 * 1000);
       }
 
+      // -----------------------------
+      // NJ mask build (no border/outline stroke)
+      // -----------------------------
       async function buildNjMask() {
-        // Query NJ polygon from states layer
         const nj = await statesLayer.queryFeatures({
           where: "STATE_ABBR = 'NJ'",
           outFields: ["STATE_ABBR"],
@@ -225,7 +364,6 @@
         if (!nj.features.length) return;
         const njGeom = nj.features[0].geometry;
 
-        // Big world rectangle in Web Mercator
         const sr = view.spatialReference || SpatialReference.WebMercator;
         const world = new Polygon({
           spatialReference: sr,
@@ -245,64 +383,126 @@
           geometry: outsideNj,
           symbol: {
             type: "simple-fill",
-            color: [255, 255, 255, 0.52], // dim outside NJ
-            outline: { type: "simple-line", color: [0, 0, 0, 0], width: 0 } // NO border line
+            color: [255, 255, 255, 0.52],
+            outline: { type: "simple-line", color: [0,0,0,0], width: 0 } // no border line
           }
         }));
       }
 
-      async function getMunicipalityName(mapPoint) {
+      // -----------------------------
+      // Popup content (new format)
+      // -----------------------------
+      function municipalityTitle(attrs) {
+        if (!attrs) return "Selected location";
+        const name = attrs.NAME || "Selected location";
+        const type = attrs.MUN_TYPE ? ` ${attrs.MUN_TYPE}` : "";
+        return `${name}${type}`.trim();
+      }
+
+      async function getMunicipalityAtPoint(mapPoint) {
         try {
           const res = await municipalitiesLayer.queryFeatures({
             geometry: mapPoint,
             spatialRelationship: "intersects",
-            outFields: ["NAME", "COUNTY", "MUN_TYPE"],
+            outFields: ["NAME", "MUN_TYPE", "COUNTY"],
             returnGeometry: false,
             num: 1
           });
-          if (!res.features.length) return null;
-          const a = res.features[0].attributes;
-          return a.COUNTY ? `${a.NAME} (${a.COUNTY} County)` : a.NAME;
+          return res.features.length ? res.features[0].attributes : null;
         } catch (e) {
           console.error(e);
           return null;
         }
       }
 
-      async function getSnowBinAtPoint(mapPoint) {
+      async function getSnowAtPoint(mapPoint) {
         try {
           const res = await snowfallLayer.queryFeatures({
             geometry: mapPoint,
             spatialRelationship: "intersects",
-            outFields: ["label", "fromdate", "todate"],
+            outFields: ["label", "todate"],
             returnGeometry: false,
             num: 1
           });
-          if (!res.features.length) return null;
-          return res.features[0].attributes;
+          return res.features.length ? res.features[0].attributes : null;
         } catch (e) {
           console.error(e);
           return null;
         }
       }
 
-      function openPopup(mapPoint, town, snowAttrs) {
-        const townLine = town ? `<div><b>Town:</b> ${town}</div>` : `<div><b>Town:</b> —</div>`;
-        const snowLine = snowAttrs?.label ? `<div><b>Expected snowfall:</b> ${snowAttrs.label}</div>` : `<div><b>Expected snowfall:</b> —</div>`;
-        const validLine = (snowAttrs?.fromdate && snowAttrs?.todate)
-          ? `<div><b>Valid:</b> ${fmt(snowAttrs.fromdate)} → ${fmt(snowAttrs.todate)}</div>`
-          : `<div><b>Valid:</b> —</div>`;
+      function openPopup(mapPoint, munAttrs, snowAttrs) {
+        const title = municipalityTitle(munAttrs);
+        const expected = snowAttrs?.label ? snowAttrs.label : "—";
+        const validUntil = snowAttrs?.todate ? fmtEnd(snowAttrs.todate) : "—";
 
         view.popup.open({
           location: mapPoint,
-          title: "Expected Snowfall (Official NWS Forecast)",
+          title,
           content: `
-            <div style="font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;">
-              ${townLine}
-              ${snowLine}
-              ${validLine}
+            <div style="font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; font-size: 13px; line-height: 1.25;">
+              <div style="display:grid; grid-template-columns: 1fr; gap: 6px;">
+                <div><b>Expected snowfall total:</b> ${expected}</div>
+                <div><b>Valid until:</b> ${validUntil}</div>
+                <div><b>Source:</b> Official National Weather Service forecast</div>
+              </div>
             </div>
           `
+        });
+      }
+
+      // -----------------------------
+      // Search box (town OR zip)
+      // -----------------------------
+      function addSearchWidget() {
+        const search = new Search({
+          view,
+          includeDefaultSources: false,
+          locationEnabled: true,
+          popupEnabled: false,
+          sources: [
+            {
+              name: "NJ towns",
+              placeholder: "Search NJ town (e.g., Toms River)",
+              layer: municipalitiesLayer,
+              searchFields: ["NAME"],
+              displayField: "NAME",
+              suggestionTemplate: "{NAME}",
+              exactMatch: false,
+              outFields: ["NAME", "MUN_TYPE", "COUNTY"],
+              resultGraphicEnabled: false
+            },
+            {
+              name: "ZIP / address",
+              placeholder: "Search ZIP (e.g., 08753)",
+              // Uses ArcGIS World Geocoding Service (requires API key)
+              url: "https://geocode-api.arcgis.com/arcgis/rest/services/World/GeocodeServer",
+              singleLineFieldName: "SingleLine",
+              resultGraphicEnabled: false
+            }
+          ]
+        });
+
+        view.ui.add(search, "top-left");
+
+        search.on("select-result", async (evt) => {
+          // If it's a municipality feature, zoom to it and open popup at centroid
+          const feature = evt?.result?.feature;
+          if (feature && feature.geometry) {
+            await view.goTo({ target: feature.geometry, scale: 140000 });
+            const center = feature.geometry.extent ? feature.geometry.extent.center : feature.geometry;
+            const munAttrs = feature.attributes || null;
+            // snowfall at that center point
+            const snowAttrs = await getSnowAtPoint(center);
+            openPopup(center, munAttrs, snowAttrs);
+          } else if (evt?.result?.extent) {
+            // Geocoder results: go to extent/location and open popup
+            await view.goTo(evt.result.extent.expand(1.2));
+            const p = evt.result.feature?.geometry || evt.result.extent.center;
+            const munAttrs = await getMunicipalityAtPoint(p);
+            const snowAttrs = await getSnowAtPoint(p);
+            openPopup(p, munAttrs, snowAttrs);
+          }
         });
       }
 
@@ -310,6 +510,7 @@
       // Init
       // -----------------------------
       view.when(async () => {
+        addSearchWidget();
         await updateValidPeriod();
         startAutoRefresh();
         await buildNjMask();
@@ -318,14 +519,15 @@
           view.popup.close();
           const mapPoint = event.mapPoint;
 
-          const [town, snowAttrs] = await Promise.all([
-            getMunicipalityName(mapPoint),
-            getSnowBinAtPoint(mapPoint)
+          const [munAttrs, snowAttrs] = await Promise.all([
+            getMunicipalityAtPoint(mapPoint),
+            getSnowAtPoint(mapPoint)
           ]);
 
-          openPopup(mapPoint, town, snowAttrs);
+          openPopup(mapPoint, munAttrs, snowAttrs);
         });
       });
+
     });
   </script>
 </body>
